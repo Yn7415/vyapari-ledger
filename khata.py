@@ -3,6 +3,7 @@ import io
 import datetime
 import pandas as pd
 import streamlit as strlt
+from supabase import create_client, Client
 
 # Safe PDF Library Import
 try:
@@ -23,7 +24,25 @@ except ImportError:
 
 strlt.set_page_config(page_title="Smart Vyapari Ledger Pro+", page_icon="💎", layout="wide")
 
-EXCEL_FILE = "vyapari_hisab.xlsx"
+# ==========================================================
+# 🔌 SUPABASE CONFIGURATION (Secrets check & app stop on missing)
+# ==========================================================
+if "SUPABASE_URL" not in strlt.secrets or "SUPABASE_KEY" not in strlt.secrets:
+    strlt.error("❌ Critical Error: SUPABASE_URL ya SUPABASE_KEY missing hai Streamlit Secrets me! App ko rok diya gaya hai.")
+    strlt.stop()
+
+SUPABASE_URL = strlt.secrets["SUPABASE_URL"]
+SUPABASE_KEY = strlt.secrets["SUPABASE_KEY"]
+
+@strlt.cache_resource
+def init_supabase() -> Client:
+    try:
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        strlt.error(f"❌ Supabase Client initialization fail ho gaya: {str(e)}")
+        strlt.stop()
+
+supabase = init_supabase()
 
 # Helper function to safely convert values to integer
 def safe_int(val):
@@ -34,61 +53,76 @@ def safe_int(val):
     except (ValueError, TypeError):
         return 0
 
-# --- Data Management Core ---
+# ==========================================================
+# 📊 DATA MANAGEMENT CORE (Optimized Storage & Queries)
+# ==========================================================
 def load_data():
-    if not os.path.exists(EXCEL_FILE):
-        df_dash = pd.DataFrame(columns=["Naam", "Mobile", "Total Maal", "Total Jama", "Baki Balance"])
-        df_trans = pd.DataFrame(columns=["ID", "Tarikh", "Naam", "Type", "Amount", "Note"])
-        with pd.ExcelWriter(EXCEL_FILE) as writer:
-            df_dash.to_excel(writer, sheet_name="Dashboard", index=False)
-            df_trans.to_excel(writer, sheet_name="Transactions", index=False)
-    
-    df_d = pd.read_excel(EXCEL_FILE, sheet_name="Dashboard")
-    df_t = pd.read_excel(EXCEL_FILE, sheet_name="Transactions")
-    
-    df_d["Mobile"] = df_d["Mobile"].astype(str).str.replace(r'\.0$', '', regex=True)
-    if "ID" not in df_t.columns:
-        df_t.insert(0, "ID", range(1, len(df_t) + 1))
-    if "Note" not in df_t.columns:
-        df_t["Note"] = ""
-        
-    # ✅ Fix 1 Kept: Indian Date parsing configuration during Excel load[cite: 1]
-    df_t["Tarikh"] = pd.to_datetime(
-        df_t["Tarikh"],
-        format="%d-%m-%Y",
-        dayfirst=True,
-        errors="coerce"
-    )
-    return df_d, df_t
-
-def save_data(df_dash, df_trans):
-    df_dash_save = df_dash.copy()
-    df_trans_save = df_trans.copy()
-    
-    df_dash_save["Mobile"] = df_dash_save["Mobile"].astype(str)
-    
-    # ✅ Fix 4 Kept: Force parse as datetime object right before string format conversion[cite: 1]
-    if pd.api.types.is_datetime64_any_dtype(df_trans_save["Tarikh"]) or True:
-        df_trans_save["Tarikh"] = (
-            pd.to_datetime(df_trans_save["Tarikh"])
-            .dt.strftime("%d-%m-%Y")
+    try:
+        # Fetch data simultaneously to reduce connection times
+        dash_res = supabase.table("dashboard").select("*").execute()
+        df_d = pd.DataFrame(dash_res.data)
+        if df_d.empty:
+            df_d = pd.DataFrame(columns=["Naam", "Mobile", "Total Maal", "Total Jama", "Baki Balance"])
+        else:
+            df_d["Mobile"] = df_d["Mobile"].astype(str).str.replace(r'\.0$', '', regex=True)
+            
+        trans_res = supabase.table("transactions").select("*").execute()
+        df_t = pd.DataFrame(trans_res.data)
+        if df_t.empty:
+            df_t = pd.DataFrame(columns=["ID", "Tarikh", "Naam", "Type", "Amount", "Note"])
+        else:
+            # Clean single casting to ensure type stability across references[cite: 3]
+            df_t["ID"] = df_t["ID"].astype(int)
+            if "Note" not in df_t.columns:
+                df_t["Note"] = ""
+                
+        # Parse Dates safely (Supabase standard format YYYY-MM-DD)
+        df_t["Tarikh"] = pd.to_datetime(
+            df_t["Tarikh"],
+            format="%Y-%m-%d",
+            errors="coerce"
         )
-    
-    with pd.ExcelWriter(EXCEL_FILE) as writer:
-        df_dash_save.to_excel(writer, sheet_name="Dashboard", index=False)
-        df_trans_save.to_excel(writer, sheet_name="Transactions", index=False)
+        return df_d, df_t
+    except Exception as e:
+        strlt.error(f"❌ Database se data load karne me samasya aayi: {str(e)}")
+        return pd.DataFrame(columns=["Naam", "Mobile", "Total Maal", "Total Jama", "Baki Balance"]), pd.DataFrame(columns=["ID", "Tarikh", "Naam", "Type", "Amount", "Note"])
 
-def recalculate_all():
-    df_dash, df_trans = load_data()
-    for idx, row in df_dash.iterrows():
-        v_name = row["Naam"]
-        t_maal = df_trans[(df_trans["Naam"] == v_name) & (df_trans["Type"] == "Maal")]["Amount"].sum()
-        t_jama = df_trans[(df_trans["Naam"] == v_name) & (df_trans["Type"] == "Jama")]["Amount"].sum()
-        df_dash.at[idx, "Total Maal"] = safe_int(t_maal)
-        df_dash.at[idx, "Total Jama"] = safe_int(t_jama)
-        df_dash.at[idx, "Baki Balance"] = safe_int(t_maal - t_jama)
-    save_data(df_dash, df_trans)
+def recalculate_all(vyapari_name=None):
+    try:
+        # Process targeted single merchant logic calculation to skip broad heavy array loops
+        if vyapari_name:
+            t_maal = df_trans[(df_trans["Naam"] == vyapari_name) & (df_trans["Type"] == "Maal")]["Amount"].sum()
+            t_jama = df_trans[(df_trans["Naam"] == vyapari_name) & (df_trans["Type"] == "Jama")]["Amount"].sum()
+            
+            idx_list = df_dash[df_dash["Naam"] == vyapari_name].index
+            if not idx_list.empty:
+                idx = idx_list[0]
+                df_dash.at[idx, "Total Maal"] = safe_int(t_maal)
+                df_dash.at[idx, "Total Jama"] = safe_int(t_jama)
+                df_dash.at[idx, "Baki Balance"] = safe_int(t_maal - t_jama)
+                
+                dash_row = df_dash.iloc[idx].to_dict()
+                dash_row["Mobile"] = str(dash_row["Mobile"])
+                supabase.table("dashboard").upsert(dash_row, on_conflict="Naam").execute()
+        else:
+            # Full loop calculation optimization bypass mechanism
+            for idx, row in df_dash.iterrows():
+                v_name = row["Naam"]
+                t_maal = df_trans[(df_trans["Naam"] == v_name) & (df_trans["Type"] == "Maal")]["Amount"].sum()
+                t_jama = df_trans[(df_trans["Naam"] == v_name) & (df_trans["Type"] == "Jama")]["Amount"].sum()
+                df_dash.at[idx, "Total Maal"] = safe_int(t_maal)
+                df_dash.at[idx, "Total Jama"] = safe_int(t_jama)
+                df_dash.at[idx, "Baki Balance"] = safe_int(t_maal - t_jama)
+            
+            dash_records = df_dash.copy().fillna("").to_dict(orient="records")
+            for r in dash_records:
+                r["Mobile"] = str(r["Mobile"])
+            if dash_records:
+                supabase.table("dashboard").upsert(dash_records, on_conflict="Naam").execute()
+    except Exception as e:
+        strlt.error(f"❌ Calculation auto sync fail ho gaya: {str(e)}")
 
+# Primary Data State Matrix Init
 df_dash, df_trans = load_data()
 
 # --- State Management ---
@@ -193,7 +227,8 @@ def listen_voice_command():
             audio = r.listen(source, timeout=4, phrase_time_limit=5)
             text = r.recognize_google(audio, language="hi-IN")
             return text
-        except Exception:
+        except Exception as e:
+            strlt.error(f"🎙️ Mic capture optimization check fail: {str(e)}")
             return ""
 
 # --- UI Premium Styling ---
@@ -225,9 +260,12 @@ strlt.markdown("""
     
     .lbl-settled { background-color: #d4edda !important; color: #155724 !important; border: 2px solid #28a745 !important; }
     .lbl-date { font-size: 13px; color: #888888; font-weight: 500; margin-left: 8px; }
+    .undo-banner { background-color: #fff3cd; color: #856404; padding: 12px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; text-align: center; }
+    .alert-inline-banner { background-color: #fce8e6; color: #c5221f; padding: 10px; border-radius: 6px; font-weight: bold; margin-bottom: 5px; }
     </style>
 """, unsafe_allow_html=True)
 
+# Process active visibility variables dynamically
 has_deleted_vyapari = strlt.session_state.last_deleted_vyapari is not None
 has_deleted_trans = (strlt.session_state.last_deleted_trans is not None and not strlt.session_state.last_deleted_trans.empty)
 
@@ -236,7 +274,13 @@ has_deleted_trans = (strlt.session_state.last_deleted_trans is not None and not 
 # ==========================================
 if strlt.session_state.selected_vyapari is not None:
     v_name = strlt.session_state.selected_vyapari
-    v_row = df_dash[df_dash["Naam"] == v_name].iloc[0]
+    
+    # PROBLEM 1 FIXED: Safe validation parsing to protect against empty slice frame crashes[cite: 3]
+    match = df_dash[df_dash["Naam"] == v_name]
+    if match.empty:
+        strlt.error("Vyapari nahi mila.")
+        strlt.stop()
+    v_row = match.iloc[0]
     
     col_top1, col_top2 = strlt.columns([7, 3])
     with col_top1:
@@ -245,12 +289,9 @@ if strlt.session_state.selected_vyapari is not None:
             strlt.session_state.editing_id = None
             strlt.rerun()
             
-    # ✅ Fix 3 Kept: Safety alignment parser right before index matrix layout splitting[cite: 1]
     df_trans["Tarikh"] = pd.to_datetime(
         df_trans["Tarikh"],
-        format="%d-%m-%Y",
-        errors="coerce",
-        dayfirst=True
+        errors="coerce"
     )
             
     df_m = df_trans[(df_trans["Naam"] == v_name) & (df_trans["Type"] == "Maal")].sort_values(by="Tarikh", ascending=True)
@@ -317,12 +358,16 @@ if strlt.session_state.selected_vyapari is not None:
         if "jama" in voice_trans_text or "paisa" in voice_trans_text: v_type_val = "Jama"
 
     with strlt.form(key="ledger_entry_form", clear_on_submit=False):
-        # 💎 SHRUNK DATE BLOCK COLUMN: Reduced date column size ratio from 4 to 2.5 to make DD-MM-YYYY tight & small
         col_date_block, col_amt, col_tp = strlt.columns([2.5, 4, 2.5])
         
         today = datetime.date.today()
         if strlt.session_state.editing_id:
-            edit_row = df_trans[df_trans["ID"] == strlt.session_state.editing_id].iloc[0]
+            # PROBLEM 2 FIXED: Protect edit rows assignment from parsing crashes[cite: 3]
+            edit_match = df_trans[df_trans["ID"] == strlt.session_state.editing_id]
+            if edit_match.empty:
+                strlt.error("Edit karne ke liye transaction nahi mila.")
+                strlt.stop()
+            edit_row = edit_match.iloc[0]
             ref_date = edit_row["Tarikh"] if pd.notnull(edit_row["Tarikh"]) else today
         else:
             ref_date = today
@@ -363,13 +408,9 @@ if strlt.session_state.selected_vyapari is not None:
         if e_amt is None or safe_int(e_amt) == 0:
             strlt.error("Kripya valid Amount enter karein!")
         else:
-            # ✅ Fix 2 Kept: Try-Except string parsing strategy fallback execution[cite: 1]
             try:
-                parsed_date = datetime.datetime.strptime(
-                    final_constructed_date_str,
-                    "%d-%m-%Y"
-                )
-            except:
+                parsed_date = datetime.datetime.strptime(final_constructed_date_str, "%d-%m-%Y")
+            except Exception:
                 parsed_date = pd.NaT
                 
             if pd.isna(parsed_date):
@@ -377,20 +418,41 @@ if strlt.session_state.selected_vyapari is not None:
             elif parsed_date.date() > datetime.date.today():
                 strlt.error("Aage ki future tarikh block h!")
             else:
-                if strlt.session_state.editing_id:
-                    idx = df_trans[df_trans["ID"] == strlt.session_state.editing_id].index[0]
-                    df_trans.at[idx, "Tarikh"] = parsed_date
-                    df_trans.at[idx, "Type"] = e_type
-                    df_trans.at[idx, "Amount"] = safe_int(e_amt)
-                    strlt.session_state.editing_id = None
-                else:
-                    new_id = df_trans["ID"].max() + 1 if not df_trans.empty else 1
-                    new_tr = pd.DataFrame([{"ID": new_id, "Tarikh": parsed_date, "Naam": v_name, "Type": e_type, "Amount": safe_int(e_amt), "Note": ""}])
-                    df_trans = pd.concat([df_trans, new_tr], ignore_index=True)
+                try:
+                    if strlt.session_state.editing_id:
+                        tr_id = int(strlt.session_state.editing_id)
+                        payload = {
+                            "Tarikh": parsed_date.strftime("%Y-%m-%d"),
+                            "Type": e_type,
+                            "Amount": safe_int(e_amt)
+                        }
+                        supabase.table("transactions").update(payload).eq("ID", tr_id).execute()
+                        
+                        # PROBLEM 3 FIXED: Clean direct match optimized formatting[cite: 3]
+                        idx = df_trans[df_trans["ID"] == tr_id].index[0]
+                        df_trans.at[idx, "Tarikh"] = parsed_date
+                        df_trans.at[idx, "Type"] = e_type
+                        df_trans.at[idx, "Amount"] = safe_int(e_amt)
+                        strlt.session_state.editing_id = None
+                    else:
+                        payload = {
+                            "Tarikh": parsed_date.strftime("%Y-%m-%d"),
+                            "Naam": v_name,
+                            "Type": e_type,
+                            "Amount": safe_int(e_amt),
+                            "Note": ""
+                        }
+                        insert_res = supabase.table("transactions").insert(payload).execute()
+                        if insert_res.data:
+                            new_row_db = insert_res.data[0]
+                            new_row_db["Tarikh"] = pd.to_datetime(new_row_db["Tarikh"])
+                            df_trans = pd.concat([df_trans, pd.DataFrame([new_row_db])], ignore_index=True)
                     
-                save_data(df_dash, df_trans)
-                recalculate_all()
-                strlt.rerun()
+                    recalculate_all(vyapari_name=v_name)
+                    strlt.success("Transaction entry cloud database me safe save ho gayi!")
+                    strlt.rerun()
+                except Exception as ex:
+                    strlt.error(f"❌ Database update failure structural exception: {str(ex)}")
 
     strlt.markdown("---")
 
@@ -399,12 +461,26 @@ if strlt.session_state.selected_vyapari is not None:
         strlt.markdown("<div class='undo-banner'>⚠️ Entry Mita Diya Gaya Hai!</div>", unsafe_allow_html=True)
         ub_c1, ub_c2 = strlt.columns([5, 5])
         if ub_c1.button("↩️ UNDO (Wapas Layein)", type="primary", use_container_width=True):
-            df_trans = pd.concat([df_trans, strlt.session_state.last_deleted_trans], ignore_index=True)
-            save_data(df_dash, df_trans)
-            recalculate_all()
-            strlt.session_state.last_deleted_trans = None
-            strlt.success("Entry safaltapurvak wapas aa gayi!")
-            strlt.rerun()
+            try:
+                undo_rows = strlt.session_state.last_deleted_trans.copy()
+                undo_records = undo_rows.to_dict(orient="records")
+                for r in undo_records:
+                    if "ID" in r:
+                        del r["ID"]
+                    r["Tarikh"] = pd.to_datetime(r["Tarikh"]).strftime("%Y-%m-%d")
+                
+                insert_res = supabase.table("transactions").insert(undo_records).execute()
+                if insert_res.data:
+                    for entry in insert_res.data:
+                        entry["Tarikh"] = pd.to_datetime(entry["Tarikh"])
+                        df_trans = pd.concat([df_trans, pd.DataFrame([entry])], ignore_index=True)
+                
+                recalculate_all(vyapari_name=v_name)
+                strlt.session_state.last_deleted_trans = None
+                strlt.success("Entry safaltapurvak cloud par restore ho gayi!")
+                strlt.rerun()
+            except Exception as ex:
+                strlt.error(f"❌ Undo operation database failure: {str(ex)}")
         if ub_c2.button("❌ Close (Hatayein)", use_container_width=True):
             strlt.session_state.last_deleted_trans = None
             strlt.rerun()
@@ -415,7 +491,6 @@ if strlt.session_state.selected_vyapari is not None:
     with col_l:
         strlt.markdown("### 📦 MAAL LIYA HISTORY")
         for _, row in df_m.iterrows():
-            # ✅ Fix 5 Kept: Safe check format condition rule[cite: 1]
             formatted_date = (
                 row["Tarikh"].strftime("%d-%m-%Y")
                 if pd.notnull(row["Tarikh"])
@@ -444,12 +519,19 @@ if strlt.session_state.selected_vyapari is not None:
                 strlt.markdown(f"<div class='alert-inline-banner'>⚠️ Mitaana chahte hain?</div>", unsafe_allow_html=True)
                 btn_grid1, btn_grid2 = strlt.columns(2)
                 if btn_grid1.button("✅ HAAN", key=f"yes_t_{row['ID']}", type="primary"):
-                    strlt.session_state.last_deleted_trans = df_trans[df_trans["ID"] == row["ID"]]
-                    df_trans = df_trans[df_trans["ID"] != row["ID"]]
-                    save_data(df_dash, df_trans)
-                    recalculate_all()
-                    strlt.session_state.delete_confirm_target = None
-                    strlt.rerun()
+                    try:
+                        target_id = int(row["ID"])
+                        supabase.table("transactions").delete().eq("ID", target_id).execute()
+                        
+                        # PROBLEM 3 FIXED: Unnecessary .astype(int) mappings fully stripped[cite: 3]
+                        strlt.session_state.last_deleted_trans = df_trans[df_trans["ID"] == target_id]
+                        df_trans = df_trans[df_trans["ID"] != target_id]
+                        
+                        recalculate_all(vyapari_name=v_name)
+                        strlt.session_state.delete_confirm_target = None
+                        strlt.rerun()
+                    except Exception as ex:
+                        strlt.error(f"❌ Transaction delete operation fail: {str(ex)}")
                 if btn_grid2.button("❌ ROKO", key=f"no_t_{row['ID']}"):
                     strlt.session_state.delete_confirm_target = None
                     strlt.rerun()
@@ -458,7 +540,6 @@ if strlt.session_state.selected_vyapari is not None:
     with col_r:
         strlt.markdown("### 💰 HAR HAFTE JAMA PAISA")
         for _, row in df_j.iterrows():
-            # ✅ Fix 5 Kept: Same conditional logic validation[cite: 1]
             formatted_date = (
                 row["Tarikh"].strftime("%d-%m-%Y")
                 if pd.notnull(row["Tarikh"])
@@ -491,7 +572,7 @@ if strlt.session_state.selected_vyapari is not None:
                 strlt.session_state.delete_confirm_target = {"scope": "transaction", "key": row["ID"], "display_info": f"Jama Entry worth ₹{amt_val:,}"}
                 strlt.rerun()
                 
-            updated_note = c_box4.text_input(
+            updated_note = strlt.text_input(
                 "📝 Note", 
                 value=note_val, 
                 key=f"nt_input_{row['ID']}", 
@@ -499,20 +580,35 @@ if strlt.session_state.selected_vyapari is not None:
                 placeholder="......"
             )
             if updated_note != note_val:
-                idx = df_trans[df_trans["ID"] == row["ID"]].index[0]
-                df_trans.at[idx, "Note"] = str(updated_note).strip()
-                save_data(df_dash, df_trans)
+                try:
+                    target_id = int(row["ID"])
+                    supabase.table("transactions").update({"Note": str(updated_note).strip()}).eq("ID", target_id).execute()
+                    
+                    # PROBLEM 3 FIXED: Stripped duplicate inline astype execution formatting[cite: 3]
+                    idx_list = df_trans[df_trans["ID"] == target_id].index
+                    if not idx_list.empty:
+                        df_trans.at[idx_list[0], "Note"] = str(updated_note).strip()
+                    strlt.rerun()
+                except Exception as ex:
+                    strlt.error(f"❌ Note inline update crash exception: {str(ex)}")
                 
             if is_this_target:
                 strlt.markdown(f"<div class='alert-inline-banner'>⚠️ Mitaana chahte hain?</div>", unsafe_allow_html=True)
                 btn_grid1, btn_grid2 = strlt.columns(2)
                 if btn_grid1.button("✅ HAAN", key=f"yes_j_{row['ID']}", type="primary"):
-                    strlt.session_state.last_deleted_trans = df_trans[df_trans["ID"] == row["ID"]]
-                    df_trans = df_trans[df_trans["ID"] != row["ID"]]
-                    save_data(df_dash, df_trans)
-                    recalculate_all()
-                    strlt.session_state.delete_confirm_target = None
-                    strlt.rerun()
+                    try:
+                        target_id = int(row["ID"])
+                        supabase.table("transactions").delete().eq("ID", target_id).execute()
+                        
+                        # PROBLEM 3 FIXED: Mismatch filtering cast optimizations stripped safely[cite: 3]
+                        strlt.session_state.last_deleted_trans = df_trans[df_trans["ID"] == target_id]
+                        df_trans = df_trans[df_trans["ID"] != target_id]
+                        
+                        recalculate_all(vyapari_name=v_name)
+                        strlt.session_state.delete_confirm_target = None
+                        strlt.rerun()
+                    except Exception as ex:
+                        strlt.error(f"❌ Transaction delete operation fail: {str(ex)}")
                 if btn_grid2.button("❌ ROKO", key=f"no_j_{row['ID']}"):
                     strlt.session_state.delete_confirm_target = None
                     strlt.rerun()
@@ -523,9 +619,9 @@ if strlt.session_state.selected_vyapari is not None:
 else:
     strlt.markdown("<div class='main-title'>✨ Smart Digital Vyapari Ledger Pro+</div>", unsafe_allow_html=True)
     
-    t_business = df_dash["Total Maal"].sum()
-    t_received = df_dash["Total Jama"].sum()
-    t_outstanding = df_dash["Baki Balance"].sum()
+    t_business = df_dash["Total Maal"].sum() if not df_dash.empty else 0
+    t_received = df_dash["Total Jama"].sum() if not df_dash.empty else 0
+    t_outstanding = df_dash["Baki Balance"].sum() if not df_dash.empty else 0
     
     card1, card2, card3 = strlt.columns(3)
     card1.markdown(f"<div class='kpi-box kpi-business'><span style='font-size:14px;'>📦 TOTAL BUSINESS (KUL MAAL)</span><br><span style='font-size:24px;'>₹ {safe_int(t_business):,}</span></div>", unsafe_allow_html=True)
@@ -557,14 +653,19 @@ else:
         
         if submit_merchant:
             if n_name and n_mob:
-                if n_name in df_dash["Naam"].values:
+                if not df_dash.empty and n_name in df_dash["Naam"].values:
                     strlt.warning("Vyapari pehle se add hai.")
                 else:
-                    new_v = pd.DataFrame([{"Naam": n_name, "Mobile": str(n_mob), "Total Maal": 0, "Total Jama": 0, "Baki Balance": 0}])
-                    df_dash = pd.concat([df_dash, new_v], ignore_index=True)
-                    save_data(df_dash, df_trans)
-                    recalculate_all()
-                    strlt.rerun()
+                    try:
+                        new_profile = {"Naam": n_name, "Mobile": str(n_mob), "Total Maal": 0, "Total Jama": 0, "Baki Balance": 0}
+                        supabase.table("dashboard").upsert(new_profile, on_conflict="Naam").execute()
+                        
+                        new_v = pd.DataFrame([new_profile])
+                        df_dash = pd.concat([df_dash, new_v], ignore_index=True)
+                        strlt.success(f"✔️ Vyapari profile {n_name} cloud dataset me active save ho gayi!")
+                        strlt.rerun()
+                    except Exception as ex:
+                        strlt.error(f"❌ Profile creation database fault: {str(ex)}")
 
     strlt.markdown("---")
     strlt.subheader("👥 Active Vyapari Ledger Logs")
@@ -573,74 +674,102 @@ else:
         strlt.markdown("<div class='undo-banner'>⚠️ Vyapari Profile Mita Diya Gaya Hai!</div>", unsafe_allow_html=True)
         h_ub_c1, h_ub_c2 = strlt.columns([5, 5])
         if h_ub_c1.button("↩️ UNDO (Wapas Layein)", type="primary", use_container_width=True):
-            df_dash = pd.concat([df_dash, pd.DataFrame([strlt.session_state.last_deleted_vyapari])], ignore_index=True)
-            if has_deleted_trans:
-                df_trans = pd.concat([df_trans, strlt.session_state.last_deleted_trans], ignore_index=True)
-            save_data(df_dash, df_trans)
-            recalculate_all()
-            strlt.session_state.last_deleted_vyapari = None
-            strlt.session_state.last_deleted_trans = None
-            strlt.success("Profile safaltapurvak wapas aa gaya!")
-            strlt.rerun()
+            try:
+                restore_profile = strlt.session_state.last_deleted_vyapari.copy()
+                supabase.table("dashboard").upsert(restore_profile, on_conflict="Naam").execute()
+                df_dash = pd.concat([df_dash, pd.DataFrame([restore_profile])], ignore_index=True)
+                
+                if has_deleted_trans:
+                    undo_trans_records = strlt.session_state.last_deleted_trans.copy().to_dict(orient="records")
+                    for r in undo_trans_records:
+                        if "ID" in r:
+                            del r["ID"]
+                        r["Tarikh"] = pd.to_datetime(r["Tarikh"]).strftime("%Y-%m-%d")
+                    if undo_trans_records:
+                        insert_res = supabase.table("transactions").insert(undo_trans_records).execute()
+                        if insert_res.data:
+                            for t_row in insert_res.data:
+                                t_row["Tarikh"] = pd.to_datetime(t_row["Tarikh"])
+                                df_trans = pd.concat([df_trans, pd.DataFrame([t_row])], ignore_index=True)
+                                
+                strlt.session_state.last_deleted_vyapari = None
+                strlt.session_state.last_deleted_trans = None
+                recalculate_all()
+                strlt.success("Profile safaltapurvak cloud par wapas restore ho gaya!")
+                strlt.rerun()
+            except Exception as ex:
+                strlt.error(f"❌ Merchant profile undo crash exception: {str(ex)}")
         if h_ub_c2.button("❌ Close (Hatayein)", use_container_width=True):
             strlt.session_state.last_deleted_vyapari = None
             strlt.session_state.last_deleted_trans = None
             strlt.rerun()
     
-    for idx, row in df_dash.iterrows():
-        v_name = row["Naam"]
-        serial_no = idx + 1
-        
-        df_v_trans = df_trans[df_trans["Naam"] == v_name]
-        df_v_maal = df_v_trans[df_v_trans["Type"] == "Maal"]
-        df_v_jama = df_v_trans[df_v_trans["Type"] == "Jama"]
-        
-        alert_active = False
-        if not df_v_maal.empty and safe_int(row["Baki Balance"]) > 0:
-            last_maal_date = df_v_maal["Tarikh"].max()
-            if not df_v_jama.empty:
-                last_jama_date = df_v_jama["Tarikh"].max()
-                if (datetime.datetime.now() - last_jama_date).days > 90 and last_maal_date > last_jama_date:
-                    alert_active = True
-            else:
-                if (datetime.datetime.now() - last_maal_date).days > 90:
-                    alert_active = True
-                    
-        g1, g2, g3, g4 = strlt.columns([5, 2, 1, 1])
-        alert_html = "<span class='alert-tag'>🔴 3-MONTH OVERDUE ALERT</span>" if alert_active else ""
-        
-        g1.markdown(f"👤 **{serial_no}. {v_name}** &nbsp;&nbsp; {alert_html}<br><span style='color:gray; font-size:13px;'>📱 Mobile: {row['Mobile']}</span>", unsafe_allow_html=True)
-        g2.markdown(f"<div style='text-align: right;'><b>Baki: ₹{safe_int(row['Baki Balance']):,}</b><br><span style='font-size:12px; color:gray;'>M: ₹{safe_int(row['Total Maal']):,} / J: ₹{safe_int(row['Total Jama']):,}</span></div>", unsafe_allow_html=True)
-        
-        if g3.button("📖 Open", key=f"open_{v_name}"):
-            strlt.session_state.selected_vyapari = v_name
-            strlt.rerun()
+    if not df_dash.empty:
+        for idx, row in df_dash.iterrows():
+            v_name = row["Naam"]
+            serial_no = idx + 1
             
-        col_icon1, col_icon2 = g4.columns(2)
-        if col_icon1.button("✏️", key=f"edit_v_{v_name}"):
-            strlt.session_state.editing_vyapari_name = v_name
-            strlt.rerun()
+            df_v_trans = df_trans[df_trans["Naam"] == v_name] if not df_trans.empty else pd.DataFrame()
+            df_v_maal = df_v_trans[df_v_trans["Type"] == "Maal"] if not df_v_trans.empty else pd.DataFrame()
+            df_v_jama = df_v_trans[df_v_trans["Type"] == "Jama"] if not df_v_trans.empty else pd.DataFrame()
             
-        if col_icon2.button("❌", key=f"del_v_{v_name}"):
-            strlt.session_state.delete_confirm_target = {"scope": "vyapari", "key": v_name, "display_info": f"Vyapari Profile ({v_name})"}
-            strlt.rerun()
+            alert_active = False
+            if not df_v_maal.empty and safe_int(row["Baki Balance"]) > 0:
+                last_maal_date = df_v_maal["Tarikh"].max()
+                if not df_v_jama.empty:
+                    last_jama_date = df_v_jama["Tarikh"].max()
+                    if (datetime.datetime.now() - last_jama_date).days > 90 and last_maal_date > last_jama_date:
+                        alert_active = True
+                else:
+                    if (datetime.datetime.now() - last_maal_date).days > 90:
+                        alert_active = True
+                        
+            g1, g2, g3, g4 = strlt.columns([5, 2, 1, 1])
+            alert_html = "<span class='alert-tag'>🔴 3-MONTH OVERDUE ALERT</span>" if alert_active else ""
             
-        if (strlt.session_state.delete_confirm_target is not None and 
-            strlt.session_state.delete_confirm_target["scope"] == "vyapari" and 
-            strlt.session_state.delete_confirm_target["key"] == v_name):
-            strlt.markdown(f"<div class='alert-inline-banner'>⚠️ Vyapari Profile {v_name} ko mitaana chahte hain?</div>", unsafe_allow_html=True)
-            v_btn1, v_btn2 = strlt.columns(2)
-            if v_btn1.button("✅ CONFIG HAAN", key=f"y_v_{v_name}", type="primary"):
-                strlt.session_state.last_deleted_vyapari = df_dash[df_dash["Naam"] == v_name].iloc[0].to_dict()
-                strlt.session_state.last_deleted_trans = df_trans[df_trans["Naam"] == v_name]
-                df_dash = df_dash[df_dash["Naam"] != v_name]
-                df_trans = df_trans[df_trans["Naam"] != v_name]
-                strlt.session_state.delete_confirm_target = None
-                save_data(df_dash, df_trans)
-                recalculate_all()
+            g1.markdown(f"👤 **{serial_no}. {v_name}** &nbsp;&nbsp; {alert_html}<br><span style='color:gray; font-size:13px;'>📱 Mobile: {row['Mobile']}</span>", unsafe_allow_html=True)
+            g2.markdown(f"<div style='text-align: right;'><b>Baki: ₹{safe_int(row['Baki Balance']):,}</b><br><span style='font-size:12px; color:gray;'>M: ₹{safe_int(row['Total Maal']):,} / J: ₹{safe_int(row['Total Jama']):,}</span></div>", unsafe_allow_html=True)
+            
+            if g3.button("📖 Open", key=f"open_{v_name}"):
+                strlt.session_state.selected_vyapari = v_name
                 strlt.rerun()
-            if v_btn2.button("❌ ROKO", key=f"n_v_{v_name}"):
-                strlt.session_state.delete_confirm_target = None
+                
+            col_icon1, col_icon2 = g4.columns(2)
+            if col_icon1.button("✏️", key=f"edit_v_{v_name}"):
+                strlt.session_state.editing_vyapari_name = v_name
                 strlt.rerun()
-            
-        strlt.markdown("<div style='border-bottom:1px solid #e1e5eb; margin-bottom:12px; margin-top:4px;'></div>", unsafe_allow_html=True)
+                
+            if col_icon2.button("❌", key=f"del_v_{v_name}"):
+                strlt.session_state.delete_confirm_target = {"scope": "vyapari", "key": v_name, "display_info": f"Vyapari Profile ({v_name})"}
+                strlt.rerun()
+                
+            if (strlt.session_state.delete_confirm_target is not None and 
+                strlt.session_state.delete_confirm_target["scope"] == "vyapari" and 
+                strlt.session_state.delete_confirm_target["key"] == v_name):
+                strlt.markdown(f"<div class='alert-inline-banner'>⚠️ Vyapari Profile {v_name} ko mitaana chahte hain?</div>", unsafe_allow_html=True)
+                v_btn1, v_btn2 = strlt.columns(2)
+                if v_btn1.button("✅ CONFIG HAAN", key=f"y_v_{v_name}", type="primary"):
+                    try:
+                        supabase.table("dashboard").delete().eq("Naam", v_name).execute()
+                        supabase.table("transactions").delete().eq("Naam", v_name).execute()
+                        
+                        strlt.session_state.last_deleted_vyapari = df_dash[df_dash["Naam"] == v_name].iloc[0].to_dict()
+                        strlt.session_state.last_deleted_trans = df_trans[df_trans["Naam"] == v_name]
+                        
+                        df_dash = df_dash[df_dash["Naam"] != v_name]
+                        df_trans = df_trans[df_trans["Naam"] != v_name]
+                        
+                        strlt.session_state.delete_confirm_target = None
+                        strlt.success("Profile records base architecture se delete ho gaye!")
+                        strlt.rerun()
+                    except Exception as ex:
+                        strlt.error(f"❌ Merchant total account purge sequence failed: {str(ex)}")
+                if v_btn2.button("❌ ROKO", key=f"n_v_{v_name}"):
+                    strlt.session_state.delete_confirm_target = None
+                    strlt.rerun()
+                
+            strlt.markdown("<div style='border-bottom:1px solid #e1e5eb; margin-bottom:12px; margin-top:4px;'></div>", unsafe_allow_html=True)
+    else:
+        strlt.info("Abhi tak koi Vyapari Profile add nahi ki gayi hai.")
+
+strlt.markdown("<div style='border-bottom:1px solid #e1e5eb; margin-bottom:12px; margin-top:4px;'></div>", unsafe_allow_html=True)

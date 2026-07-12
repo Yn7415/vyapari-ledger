@@ -1,8 +1,7 @@
 streamlit
-yfinance
 pandas
-plotly
-pypdf
-google-genai
-openpyxl
 supabase
+reportlab
+SpeechRecognition
+PyAudio
+gspread
