@@ -5,3 +5,4 @@ plotly
 pypdf
 google-genai
 openpyxl
+supabase
