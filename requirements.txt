@@ -2,6 +2,3 @@ streamlit
 pandas
 supabase
 reportlab
-SpeechRecognition
-PyAudio
-gspread
