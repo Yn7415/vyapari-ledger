@@ -58,7 +58,6 @@ def safe_int(val):
 # ==========================================================
 def load_data():
     try:
-        # Fetch data simultaneously to reduce connection times
         dash_res = supabase.table("dashboard").select("*").execute()
         df_d = pd.DataFrame(dash_res.data)
         if df_d.empty:
@@ -71,12 +70,10 @@ def load_data():
         if df_t.empty:
             df_t = pd.DataFrame(columns=["ID", "Tarikh", "Naam", "Type", "Amount", "Note"])
         else:
-            # Clean single casting to ensure type stability across references[cite: 3]
             df_t["ID"] = df_t["ID"].astype(int)
             if "Note" not in df_t.columns:
                 df_t["Note"] = ""
                 
-        # Parse Dates safely (Supabase standard format YYYY-MM-DD)
         df_t["Tarikh"] = pd.to_datetime(
             df_t["Tarikh"],
             format="%Y-%m-%d",
@@ -89,7 +86,6 @@ def load_data():
 
 def recalculate_all(vyapari_name=None):
     try:
-        # Process targeted single merchant logic calculation to skip broad heavy array loops
         if vyapari_name:
             t_maal = df_trans[(df_trans["Naam"] == vyapari_name) & (df_trans["Type"] == "Maal")]["Amount"].sum()
             t_jama = df_trans[(df_trans["Naam"] == vyapari_name) & (df_trans["Type"] == "Jama")]["Amount"].sum()
@@ -105,7 +101,6 @@ def recalculate_all(vyapari_name=None):
                 dash_row["Mobile"] = str(dash_row["Mobile"])
                 supabase.table("dashboard").upsert(dash_row, on_conflict="Naam").execute()
         else:
-            # Full loop calculation optimization bypass mechanism
             for idx, row in df_dash.iterrows():
                 v_name = row["Naam"]
                 t_maal = df_trans[(df_trans["Naam"] == v_name) & (df_trans["Type"] == "Maal")]["Amount"].sum()
@@ -140,7 +135,7 @@ if "last_deleted_vyapari" not in strlt.session_state:
 if "last_deleted_trans" not in strlt.session_state:
     strlt.session_state.last_deleted_trans = None
 
-# --- PDF Generator ---
+# --- PDF Generator Function ---
 def generate_ledger_pdf(v_name, v_row, df_m, df_j):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -231,41 +226,158 @@ def listen_voice_command():
             strlt.error(f"🎙️ Mic capture optimization check fail: {str(e)}")
             return ""
 
-# --- UI Premium Styling ---
+# ===== UI PART 1 START =====
 strlt.markdown("""
     <style>
-    .main-title { font-size: 32px; font-weight: bold; color: #1a73e8; text-align: center; margin-bottom: 25px; }
-    .kpi-box { padding: 22px; border-radius: 15px; text-align: center; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-    .kpi-business { background-color: #e8f0fe; color: #1a73e8; border: 1px solid #d2e3fc; }
-    .kpi-received { background-color: #e6f4ea; color: #137333; border: 1px solid #ceead6; }
-    .kpi-outstanding { background-color: #fce8e6; color: #c5221f; border: 1px solid #fad2cf; }
-    .alert-tag { background-color: #ff4d4d; color: white; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; animation: blinker 1.5s linear infinite; }
-    @keyframes blinker { 50% { opacity: 0.4; } }
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
     
+    html, body, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
+        font-family: 'Poppins', sans-serif !important;
+        background-color: #0F172A !important;
+        color: #FFFFFF !important;
+    }
+    
+    .hero-box {
+        background: linear-gradient(135deg, #1E3A8A 0%, #0F766E 50%, #111827 100%);
+        padding: 40px 30px;
+        border-radius: 18px;
+        text-align: center;
+        color: #FFFFFF;
+        margin-bottom: 25px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4);
+    }
+    
+    .hero-box h1 {
+        font-size: 38px;
+        font-weight: 700;
+        margin: 0 0 10px 0 !important;
+        color: #FFFFFF !important;
+        letter-spacing: -0.5px;
+    }
+    
+    .hero-box p {
+        font-size: 16px;
+        font-weight: 400;
+        color: #94A3B8;
+        margin: 0 !important;
+    }
+    
+    .metric-card {
+        background: rgba(30, 41, 59, 0.65);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        padding: 24px;
+        border-radius: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 8px 24 rgba(0, 0, 0, 0.2);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-4px);
+        background: rgba(30, 41, 59, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+    }
+    
+    .metric-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #94A3B8;
+        letter-spacing: 0.5px;
+        margin-bottom: 6px;
+    }
+    
+    .metric-value {
+        font-size: 30px;
+        font-weight: 700;
+        color: #FFFFFF;
+        letter-spacing: -0.5px;
+    }
+    
+    .premium-vyapari-card {
+        background: rgba(30, 41, 59, 0.5) !important;
+        border-radius: 18px !important;
+        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        padding: 24px !important;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2) !important;
+        transition: all 0.3s ease-in-out !important;
+        margin-bottom: 16px !important;
+    }
+    
+    .premium-vyapari-card:hover {
+        transform: translateY(-5px) scale(1.005) !important;
+        background: rgba(30, 41, 59, 0.8) !important;
+        border: 1px solid rgba(59, 130, 246, 0.3) !important;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4) !important;
+    }
+
+    .v-title-large { font-size: 24px; font-weight: 700; color: #FFFFFF; margin-bottom: 2px; }
+    .v-sub-mobile { font-size: 14px; color: #94A3B8; font-weight: 500; }
+    
+    .v-grid-stats { font-size: 15px; font-weight: 600; color: #CBD5E1; }
+    .v-baki-highlight { font-size: 20px; font-weight: 700; color: #EF4444; }
+
     .lbl-highlight { 
-        font-size: 16px; 
-        font-weight: bold; 
+        font-size: 15px; 
+        font-weight: 600; 
         padding: 5px 12px; 
         border-radius: 6px; 
         display: inline-block;
-        margin-bottom: 3px;
     }
-    .lbl-maal { background-color: #d6e4ff; color: #1a73e8 !important; border-left: 5px solid #1a73e8; }
     
-    .lbl-j-1 { background-color: #e8f0fe; color: #1a73e8 !important; border-left: 5px solid #4285f4; }
-    .lbl-j-2 { background-color: #fff3cd; color: #856404 !important; border-left: 5px solid #ffc107; }
-    .lbl-j-3 { background-color: #f3e5f5; color: #4a148c !important; border-left: 5px solid #9c27b0; }
-    .lbl-j-4 { background-color: #e0f7fa; color: #006064 !important; border-left: 5px solid #00bcd4; }
-    .lbl-j-5 { background-color: #d4edda; color: #155724 !important; border: 2px solid #28a745; font-size: 17px; }
+    .lbl-settled { background-color: rgba(16, 185, 129, 0.15) !important; color: #10B981 !important; border: 1px solid #10B981 !important; }
+    .lbl-maal { background-color: rgba(59, 130, 246, 0.15) !important; color: #3B82F6 !important; border: 1px solid #3B82F6 !important; }
     
-    .lbl-settled { background-color: #d4edda !important; color: #155724 !important; border: 2px solid #28a745 !important; }
-    .lbl-date { font-size: 13px; color: #888888; font-weight: 500; margin-left: 8px; }
-    .undo-banner { background-color: #fff3cd; color: #856404; padding: 12px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; text-align: center; }
-    .alert-inline-banner { background-color: #fce8e6; color: #c5221f; padding: 10px; border-radius: 6px; font-weight: bold; margin-bottom: 5px; }
+    .lbl-j-slab-1 { background-color: rgba(59, 130, 246, 0.12) !important; color: #3B82F6 !important; border: 1px solid #3B82F6 !important; }
+    .lbl-j-slab-2 { background-color: rgba(245, 158, 11, 0.12) !important; color: #F59E0B !important; border: 1px solid #F59E0B !important; }
+    .lbl-j-slab-3 { background-color: rgba(168, 85, 247, 0.12) !important; color: #A855F7 !important; border: 1px solid #A855F7 !important; }
+    .lbl-j-slab-4 { background-color: rgba(6, 182, 212, 0.12) !important; color: #06B6D4 !important; border: 1px solid #06B6D4 !important; }
+    .lbl-j-slab-5 { background-color: rgba(239, 68, 68, 0.12) !important; color: #EF4444 !important; border: 1px solid #EF4444 !important; }
+    
+    .lbl-date { font-size: 14px; color: #E2E8F0; font-weight: 500; }
+    .undo-banner { background-color: #1E293B; color: #F59E0B; padding: 14px; border-radius: 14px; font-weight: 600; text-align: center; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .alert-inline-banner { background-color: rgba(220, 38, 38, 0.12); color: #EF4444; padding: 14px; border-radius: 14px; font-weight: 600; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .alert-tag { background-color: #EF4444; color: white; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; }
+    .editing-badge { background-color: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 700; padding: 6px 14px; border-radius: 10px; margin-bottom: 12px; display: inline-block; }
+
+    /* REQUESTED INPUT BOX COMPACT WRAPPER CHANGES */
+    div[data-testid="stTextInput"]{
+        margin-top:0px !important;
+    }
+    div[data-testid="stTextInput"] input{
+        height:34px !important;
+        width:95px !important;
+        min-width:95px !important;
+        max-width:95px !important;
+        padding:4px 8px !important;
+        text-align:left !important;
+    }
+
+    [data-testid="stForm"], div[data-testid="stExpander"], .stAlert {
+        background-color: #1E293B !important;
+        border-radius: 18px !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        box-shadow: 0 4px 25px rgba(0,0,0,0.2) !important;
+    }
+    
+    button[kind="primary"], button[kind="secondary"] {
+        border-radius: 10px !important;
+        padding: 8px 14px !important;
+        font-weight: 600 !important;
+        font-size: 13px !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    }
+    button[kind="primary"] { background-color: #3B82F6 !important; border: none !important; color: white !important; }
+    button[kind="primary"]:hover { background-color: #2563EB !important; transform: translateY(-1px); }
+    button[kind="secondary"] { background-color: rgba(255, 255, 255, 0.06) !important; color: #FFFFFF !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; }
+    button[kind="secondary"]:hover { background-color: rgba(255, 255, 255, 0.12) !important; }
+    .no-data-text { text-align: center; padding: 40px; color: #64748B; font-size: 16px; font-weight: 500; }
     </style>
 """, unsafe_allow_html=True)
+# ===== UI PART 1 END =====
 
-# Process active visibility variables dynamically
 has_deleted_vyapari = strlt.session_state.last_deleted_vyapari is not None
 has_deleted_trans = (strlt.session_state.last_deleted_trans is not None and not strlt.session_state.last_deleted_trans.empty)
 
@@ -275,7 +387,6 @@ has_deleted_trans = (strlt.session_state.last_deleted_trans is not None and not 
 if strlt.session_state.selected_vyapari is not None:
     v_name = strlt.session_state.selected_vyapari
     
-    # PROBLEM 1 FIXED: Safe validation parsing to protect against empty slice frame crashes[cite: 3]
     match = df_dash[df_dash["Naam"] == v_name]
     if match.empty:
         strlt.error("Vyapari nahi mila.")
@@ -289,11 +400,7 @@ if strlt.session_state.selected_vyapari is not None:
             strlt.session_state.editing_id = None
             strlt.rerun()
             
-    df_trans["Tarikh"] = pd.to_datetime(
-        df_trans["Tarikh"],
-        errors="coerce"
-    )
-            
+    df_trans["Tarikh"] = pd.to_datetime(df_trans["Tarikh"], errors="coerce")
     df_m = df_trans[(df_trans["Naam"] == v_name) & (df_trans["Type"] == "Maal")].sort_values(by="Tarikh", ascending=True)
     df_j = df_trans[(df_trans["Naam"] == v_name) & (df_trans["Type"] == "Jama")].sort_values(by="Tarikh", ascending=False)
 
@@ -314,40 +421,60 @@ if strlt.session_state.selected_vyapari is not None:
                 m_amt -= remaining_jama
                 temp_used_pieces.append(jama_list_fifo[j_idx]['ID'])
                 j_idx += 1
-                if j_idx < len(jama_list_fifo):
-                    remaining_jama = jama_list_fifo[j_idx]['Amount']
+                if j_idx < len(jama_list_fifo): remaining_jama = jama_list_fifo[j_idx]['Amount']
             else:
                 remaining_jama -= m_amt
                 temp_used_pieces.append(jama_list_fifo[j_idx]['ID'])
                 m_amt = 0
         if m_amt == 0:
             settled_trans_ids.add(m_entry['ID'])
-            for j_id in temp_used_pieces:
-                settled_trans_ids.add(j_id)
+            for j_id in temp_used_pieces: settled_trans_ids.add(j_id)
 
     with col_top2:
         if pdf_available:
             pdf_data = generate_ledger_pdf(v_name, v_row, df_m, df_j)
             strlt.download_button(label="📥 Download PDF Layout Report", data=pdf_data, file_name=f"{v_name}_khata_report.pdf", mime="application/pdf")
 
-    strlt.markdown(f"<div class='main-title'>📊 Khata Statement: {v_name}</div>", unsafe_allow_html=True)
-    strlt.caption(f"📱 Mobile: {v_row['Mobile']}")
+    strlt.markdown(f"<div class='hero-box'><h1 style='font-size: 42px;'>👤 {v_name}</h1><p style='font-size: 18px; color: #CBD5E1;'>📞 Mobile: {v_row['Mobile']}</p></div>", unsafe_allow_html=True)
     
     m1, m2, m3 = strlt.columns(3)
-    m1.markdown(f"<div class='kpi-box kpi-business'><span style='font-size:13px;'>📦 KUL MAAL (TOTAL BUSINESS)</span><br><span style='font-size:22px;'>₹ {safe_int(v_row['Total Maal']):,}</span></div>", unsafe_allow_html=True)
-    m2.markdown(f"<div class='kpi-box kpi-received'><span style='font-size:13px;'>💰 KUL JAMA (TOTAL RECEIVED)</span><br><span style='font-size:22px;'>₹ {safe_int(v_row['Total Jama']):,}</span></div>", unsafe_allow_html=True)
-    m3.markdown(f"<div class='kpi-box kpi-outstanding'><span style='font-size:13px;'>🔴 TOTAL BAKI (OUTSTANDING)</span><br><span style='font-size:22px;'>₹ {safe_int(v_row['Baki Balance']):,}</span></div>", unsafe_allow_html=True)
+    m1.markdown(f"<div class='metric-card'><div class='metric-title'>📦 KUL MAAL (TOTAL BUSINESS)</div><div class='metric-value' style='color:#3B82F6;'>₹ {safe_int(v_row['Total Maal']):,}</div></div>", unsafe_allow_html=True)
+    m2.markdown(f"<div class='metric-card'><div class='metric-title'>💰 KUL JAMA (TOTAL RECEIVED)</div><div class='metric-value' style='color:#10B981;'>₹ {safe_int(v_row['Total Jama']):,}</div></div>", unsafe_allow_html=True)
+    m3.markdown(f"<div class='metric-card' style='background: rgba(239, 68, 68, 0.08);'><div class='metric-title' style='color: #FCA5A5;'>🔴 CURRENT BALANCE (TOTAL BAKI)</div><div class='metric-value' style='color:#EF4444;'>₹ {safe_int(v_row['Baki Balance']):,}</div></div>", unsafe_allow_html=True)
     
+    # --- Single Vyapari Pie Chart Panel ---
+    strlt.markdown("<br>", unsafe_allow_html=True)
+    if "show_vyapari_pie" not in strlt.session_state:
+        strlt.session_state.show_vyapari_pie = False
+        
+    if strlt.button(f"📊 Toggle {v_name} Monthly Len-Den Pie Chart Panel", type="primary", use_container_width=True):
+        strlt.session_state.show_vyapari_pie = not strlt.session_state.show_vyapari_pie
+        strlt.rerun()
+        
+    if strlt.session_state.show_vyapari_pie:
+        df_v_all = df_trans[df_trans["Naam"] == v_name].copy()
+        if not df_v_all.empty:
+            df_v_all["Month_Key"] = df_v_all["Tarikh"].dt.strftime("%b %Y")
+            df_pie_data = df_v_all.groupby("Month_Key")["Amount"].sum()
+            
+            strlt.markdown(f"<div class='metric-card'><div class='metric-title'>📈 Monthly Len-Den Share for {v_name}</div>", unsafe_allow_html=True)
+            strlt.bar_chart(df_pie_data, color="#3B82F6")
+            strlt.markdown("</div>", unsafe_allow_html=True)
+        else:
+            strlt.markdown("<div class='metric-card'><p class='no-data-text'>📊 No Transaction Data Available to Plot Pie Chart</p></div>", unsafe_allow_html=True)
+
     strlt.markdown("<br>", unsafe_allow_html=True)
 
     # --- FORM INPUT ---
     strlt.subheader("✏️ Entry Form (Amount daalkar Enter dabayein)")
-    
+    if strlt.session_state.editing_id:
+        strlt.markdown("<div class='editing-badge'>🟡 Editing Transaction Pipeline Mode Active</div>", unsafe_allow_html=True)
+
     voice_trans_text = ""
-    if strlt.button("🎙️ Speak Transaction Entry (Bolein: 'Bees hazar maal' ya 'Das hazar jama')"):
-        with strlt.spinner("Aap boliye, system sun raha hai..."):
+    if strlt.button("🎙️ Speak Transaction Entry"):
+        with strlt.spinner("Aap boliye..."):
             voice_trans_text = listen_voice_command()
-            if voice_trans_text: strlt.info(f"System ne suna: '{voice_trans_text}'")
+            if voice_trans_text: strlt.info(f"Suna: '{voice_trans_text}'")
             
     v_amt_val = None
     v_type_val = "Maal"
@@ -359,10 +486,8 @@ if strlt.session_state.selected_vyapari is not None:
 
     with strlt.form(key="ledger_entry_form", clear_on_submit=False):
         col_date_block, col_amt, col_tp = strlt.columns([2.5, 4, 2.5])
-        
         today = datetime.date.today()
         if strlt.session_state.editing_id:
-            # PROBLEM 2 FIXED: Protect edit rows assignment from parsing crashes[cite: 3]
             edit_match = df_trans[df_trans["ID"] == strlt.session_state.editing_id]
             if edit_match.empty:
                 strlt.error("Edit karne ke liye transaction nahi mila.")
@@ -378,10 +503,8 @@ if strlt.session_state.selected_vyapari is not None:
         
         try: def_day_idx = day_options.index(str(ref_date.day).zfill(2))
         except ValueError: def_day_idx = today.day - 1
-            
         try: def_mon_idx = month_options.index(str(ref_date.month).zfill(2))
         except ValueError: def_mon_idx = today.month - 1
-            
         try: def_year_idx = year_options.index(str(ref_date.year))
         except ValueError: def_year_idx = len(year_options) - 1
 
@@ -401,242 +524,204 @@ if strlt.session_state.selected_vyapari is not None:
             e_amt = col_amt.number_input("Amount (₹)", min_value=0, value=v_amt_val, placeholder="Type amount...")
             e_type = col_tp.selectbox("Entry Type", ["Maal", "Jama"], index=0 if v_type_val == "Maal" else 1)
 
-        btn_label = "💾 Update Badlav Save Karein" if strlt.session_state.editing_id else "⚡ Save Record (Ya Keyboard se Enter dabayein)"
+        btn_label = "💾 Update Transaction" if strlt.session_state.editing_id else "⚡ Save Record"
         submit_ledger = strlt.form_submit_button(label=btn_label, type="primary")
 
     if submit_ledger:
-        if e_amt is None or safe_int(e_amt) == 0:
-            strlt.error("Kripya valid Amount enter karein!")
+        if e_amt is None or safe_int(e_amt) == 0: strlt.error("Kripya valid Amount enter karein!")
         else:
-            try:
-                parsed_date = datetime.datetime.strptime(final_constructed_date_str, "%d-%m-%Y")
-            except Exception:
-                parsed_date = pd.NaT
-                
-            if pd.isna(parsed_date):
-                strlt.error("Chuni hui tarikh calendar ke hisab se valid nahi h!")
-            elif parsed_date.date() > datetime.date.today():
-                strlt.error("Aage ki future tarikh block h!")
+            try: parsed_date = datetime.datetime.strptime(final_constructed_date_str, "%d-%m-%Y")
+            except Exception: parsed_date = pd.NaT
+            if pd.isna(parsed_date): strlt.error("Chuni hui tarikh calendar ke hisab se valid nahi h!")
+            elif parsed_date.date() > datetime.date.today(): strlt.error("Aage ki future tarikh block h!")
             else:
                 try:
                     if strlt.session_state.editing_id:
                         tr_id = int(strlt.session_state.editing_id)
-                        payload = {
-                            "Tarikh": parsed_date.strftime("%Y-%m-%d"),
-                            "Type": e_type,
-                            "Amount": safe_int(e_amt)
-                        }
+                        payload = {"Tarikh": parsed_date.strftime("%Y-%m-%d"), "Type": e_type, "Amount": safe_int(e_amt)}
                         supabase.table("transactions").update(payload).eq("ID", tr_id).execute()
-                        
-                        # PROBLEM 3 FIXED: Clean direct match optimized formatting[cite: 3]
                         idx = df_trans[df_trans["ID"] == tr_id].index[0]
                         df_trans.at[idx, "Tarikh"] = parsed_date
                         df_trans.at[idx, "Type"] = e_type
                         df_trans.at[idx, "Amount"] = safe_int(e_amt)
                         strlt.session_state.editing_id = None
                     else:
-                        payload = {
-                            "Tarikh": parsed_date.strftime("%Y-%m-%d"),
-                            "Naam": v_name,
-                            "Type": e_type,
-                            "Amount": safe_int(e_amt),
-                            "Note": ""
-                        }
+                        payload = {"Tarikh": parsed_date.strftime("%Y-%m-%d"), "Naam": v_name, "Type": e_type, "Amount": safe_int(e_amt), "Note": ""}
                         insert_res = supabase.table("transactions").insert(payload).execute()
                         if insert_res.data:
                             new_row_db = insert_res.data[0]
                             new_row_db["Tarikh"] = pd.to_datetime(new_row_db["Tarikh"])
                             df_trans = pd.concat([df_trans, pd.DataFrame([new_row_db])], ignore_index=True)
-                    
                     recalculate_all(vyapari_name=v_name)
-                    strlt.success("Transaction entry cloud database me safe save ho gayi!")
                     strlt.rerun()
-                except Exception as ex:
-                    strlt.error(f"❌ Database update failure structural exception: {str(ex)}")
+                except Exception as ex: strlt.error(f"❌ Database error: {str(ex)}")
 
     strlt.markdown("---")
 
-    # --- ↩️ LOCAL LEDGER UNDO BAR ---
-    if has_deleted_trans and not has_deleted_vyapari:
-        strlt.markdown("<div class='undo-banner'>⚠️ Entry Mita Diya Gaya Hai!</div>", unsafe_allow_html=True)
-        ub_c1, ub_c2 = strlt.columns([5, 5])
-        if ub_c1.button("↩️ UNDO (Wapas Layein)", type="primary", use_container_width=True):
-            try:
-                undo_rows = strlt.session_state.last_deleted_trans.copy()
-                undo_records = undo_rows.to_dict(orient="records")
-                for r in undo_records:
-                    if "ID" in r:
-                        del r["ID"]
-                    r["Tarikh"] = pd.to_datetime(r["Tarikh"]).strftime("%Y-%m-%d")
-                
-                insert_res = supabase.table("transactions").insert(undo_records).execute()
-                if insert_res.data:
-                    for entry in insert_res.data:
-                        entry["Tarikh"] = pd.to_datetime(entry["Tarikh"])
-                        df_trans = pd.concat([df_trans, pd.DataFrame([entry])], ignore_index=True)
-                
-                recalculate_all(vyapari_name=v_name)
-                strlt.session_state.last_deleted_trans = None
-                strlt.success("Entry safaltapurvak cloud par restore ho gayi!")
-                strlt.rerun()
-            except Exception as ex:
-                strlt.error(f"❌ Undo operation database failure: {str(ex)}")
-        if ub_c2.button("❌ Close (Hatayein)", use_container_width=True):
-            strlt.session_state.last_deleted_trans = None
-            strlt.rerun()
-
-    col_l, col_r = strlt.columns(2)
+    # ===== UI PART 2 START =====
+    col_l, col_r = strlt.columns(2, gap="large")
     
-    # --- LEFT COLUMN: MAAL HISTORY ---
     with col_l:
         strlt.markdown("### 📦 MAAL LIYA HISTORY")
         for _, row in df_m.iterrows():
-            formatted_date = (
-                row["Tarikh"].strftime("%d-%m-%Y")
-                if pd.notnull(row["Tarikh"])
-                else ""
-            )
+            formatted_date = row["Tarikh"].strftime("%d-%m-%Y") if pd.notnull(row["Tarikh"]) else ""
             amt_val = safe_int(row['Amount'])
             
-            is_this_target = (strlt.session_state.delete_confirm_target is not None and 
-                              strlt.session_state.delete_confirm_target["scope"] == "transaction" and 
-                              strlt.session_state.delete_confirm_target["key"] == row["ID"])
+            style_class = "lbl-settled" if row['ID'] in settled_trans_ids else "lbl-maal"
+            is_this_target = (strlt.session_state.delete_confirm_target is not None and strlt.session_state.delete_confirm_target["scope"] == "transaction" and strlt.session_state.delete_confirm_target["key"] == row["ID"])
             
-            style_class = "lbl-maal lbl-settled" if row['ID'] in settled_trans_ids else "lbl-maal"
-            
-            c_box1, c_box2, c_box3 = strlt.columns([3, 1, 1])
-            c_box1.markdown(f"<div style='margin-bottom:8px;'><span class='lbl-highlight {style_class}'>₹ {amt_val:,}</span><span class='lbl-date'>📅 {formatted_date}</span></div>", unsafe_allow_html=True)
-            
-            if c_box2.button("✏️", key=f"ed_{row['ID']}"):
-                strlt.session_state.editing_id = row["ID"]
-                strlt.rerun()
+            with strlt.container():
+                r_amt, r_date, r_ed, r_del = strlt.columns([1.3, 1.8, 0.55, 0.55], vertical_alignment="center")
+                r_amt.markdown(f"<div><span class='lbl-highlight {style_class}'>₹ {amt_val:,}</span></div>", unsafe_allow_html=True)
+                r_date.markdown(f"<div style='padding-top:2px;'><span class='lbl-date'>📅 {formatted_date}</span></div>", unsafe_allow_html=True)
                 
-            if c_box3.button("❌", key=f"del_{row['ID']}"):
-                strlt.session_state.delete_confirm_target = {"scope": "transaction", "key": row["ID"], "display_info": f"Maal Entry worth ₹{amt_val:,}"}
-                strlt.rerun()
-                
-            if is_this_target:
-                strlt.markdown(f"<div class='alert-inline-banner'>⚠️ Mitaana chahte hain?</div>", unsafe_allow_html=True)
-                btn_grid1, btn_grid2 = strlt.columns(2)
-                if btn_grid1.button("✅ HAAN", key=f"yes_t_{row['ID']}", type="primary"):
-                    try:
-                        target_id = int(row["ID"])
-                        supabase.table("transactions").delete().eq("ID", target_id).execute()
-                        
-                        # PROBLEM 3 FIXED: Unnecessary .astype(int) mappings fully stripped[cite: 3]
-                        strlt.session_state.last_deleted_trans = df_trans[df_trans["ID"] == target_id]
-                        df_trans = df_trans[df_trans["ID"] != target_id]
-                        
+                if r_ed.button("✏️", key=f"ed_{row['ID']}", use_container_width=True, type="secondary"):
+                    strlt.session_state.editing_id = row["ID"]
+                    strlt.rerun()
+                if r_del.button("❌", key=f"del_{row['ID']}", use_container_width=True, type="secondary"):
+                    strlt.session_state.delete_confirm_target = {"scope": "transaction", "key": row["ID"]}
+                    strlt.rerun()
+                    
+                if is_this_target:
+                    strlt.markdown("<div class='alert-inline-banner'>⚠️ Mitaana chahte hain?</div>", unsafe_allow_html=True)
+                    b1, b2 = strlt.columns(2)
+                    if b1.button("✅ HAAN", key=f"yes_t_{row['ID']}", type="primary", use_container_width=True):
+                        supabase.table("transactions").delete().eq("ID", int(row["ID"])).execute()
+                        df_trans = df_trans[df_trans["ID"] != int(row["ID"])]
                         recalculate_all(vyapari_name=v_name)
                         strlt.session_state.delete_confirm_target = None
                         strlt.rerun()
-                    except Exception as ex:
-                        strlt.error(f"❌ Transaction delete operation fail: {str(ex)}")
-                if btn_grid2.button("❌ ROKO", key=f"no_t_{row['ID']}"):
-                    strlt.session_state.delete_confirm_target = None
-                    strlt.rerun()
+                    if b2.button("❌ ROKO", key=f"no_t_{row['ID']}", use_container_width=True):
+                        strlt.session_state.delete_confirm_target = None
+                        strlt.rerun()
 
-    # --- RIGHT COLUMN: JAMA HISTORY ---
     with col_r:
         strlt.markdown("### 💰 HAR HAFTE JAMA PAISA")
         for _, row in df_j.iterrows():
-            formatted_date = (
-                row["Tarikh"].strftime("%d-%m-%Y")
-                if pd.notnull(row["Tarikh"])
-                else ""
-            )
+            formatted_date = row["Tarikh"].strftime("%d-%m-%Y") if pd.notnull(row["Tarikh"]) else ""
             amt_val = safe_int(row['Amount'])
             note_val = str(row['Note']) if pd.notnull(row['Note']) and str(row['Note']) != "nan" else ""
+            is_this_target = (strlt.session_state.delete_confirm_target is not None and strlt.session_state.delete_confirm_target["scope"] == "transaction" and strlt.session_state.delete_confirm_target["key"] == row["ID"])
             
-            is_this_target = (strlt.session_state.delete_confirm_target is not None and 
-                              strlt.session_state.delete_confirm_target["scope"] == "transaction" and 
-                              strlt.session_state.delete_confirm_target["key"] == row["ID"])
-            
-            if row['ID'] in settled_trans_ids:
+            if row['ID'] in settled_trans_ids: 
                 jama_class = "lbl-settled"
             else:
-                if amt_val <= 5000: jama_class = "lbl-j-1"
-                elif amt_val <= 10000: jama_class = "lbl-j-2"
-                elif amt_val <= 15000: jama_class = "lbl-j-3"
-                elif amt_val <= 20000: jama_class = "lbl-j-4"
-                else: jama_class = "lbl-j-5"
+                if amt_val <= 5000: jama_class = "lbl-j-slab-1"
+                elif amt_val <= 10000: jama_class = "lbl-j-slab-2"
+                elif amt_val <= 15000: jama_class = "lbl-j-slab-3"
+                elif amt_val <= 20000: jama_class = "lbl-j-slab-4"
+                else: jama_class = "lbl-j-slab-5"
                 
-            c_box1, c_box2, c_box3, c_box4 = strlt.columns([3, 1, 1, 2])
-            c_box1.markdown(f"<div style='margin-bottom:8px;'><span class='lbl-highlight {jama_class}'>₹ {amt_val:,}</span><span class='lbl-date'>📅 {formatted_date}</span></div>", unsafe_allow_html=True)
-            
-            if c_box2.button("✏️", key=f"ed_j_{row['ID']}"):
-                strlt.session_state.editing_id = row["ID"]
-                strlt.rerun()
+            with strlt.container():
+                # FIXED REQUESTED PROPORTIONS: [1.3, 1.8, 0.55, 0.55, 1.1] with vertical center alignment
+                r_amt, r_date, r_ed, r_del, r_nt = strlt.columns([1.3, 1.8, 0.55, 0.55, 1.1], vertical_alignment="center")
                 
-            if c_box3.button("❌", key=f"del_j_{row['ID']}"):
-                strlt.session_state.delete_confirm_target = {"scope": "transaction", "key": row["ID"], "display_info": f"Jama Entry worth ₹{amt_val:,}"}
-                strlt.rerun()
+                r_amt.markdown(f"<div><span class='lbl-highlight {jama_class}'>₹ {amt_val:,}</span></div>", unsafe_allow_html=True)
+                r_date.markdown(f"<div style='padding-top:2px;'><span class='lbl-date'>📅 {formatted_date}</span></div>", unsafe_allow_html=True)
                 
-            updated_note = strlt.text_input(
-                "📝 Note", 
-                value=note_val, 
-                key=f"nt_input_{row['ID']}", 
-                label_visibility="collapsed",
-                placeholder="......"
-            )
-            if updated_note != note_val:
-                try:
-                    target_id = int(row["ID"])
-                    supabase.table("transactions").update({"Note": str(updated_note).strip()}).eq("ID", target_id).execute()
-                    
-                    # PROBLEM 3 FIXED: Stripped duplicate inline astype execution formatting[cite: 3]
-                    idx_list = df_trans[df_trans["ID"] == target_id].index
-                    if not idx_list.empty:
-                        df_trans.at[idx_list[0], "Note"] = str(updated_note).strip()
+                if r_ed.button("✏️", key=f"ed_j_{row['ID']}", use_container_width=True, type="secondary"):
+                    strlt.session_state.editing_id = row["ID"]
                     strlt.rerun()
-                except Exception as ex:
-                    strlt.error(f"❌ Note inline update crash exception: {str(ex)}")
-                
-            if is_this_target:
-                strlt.markdown(f"<div class='alert-inline-banner'>⚠️ Mitaana chahte hain?</div>", unsafe_allow_html=True)
-                btn_grid1, btn_grid2 = strlt.columns(2)
-                if btn_grid1.button("✅ HAAN", key=f"yes_j_{row['ID']}", type="primary"):
-                    try:
-                        target_id = int(row["ID"])
-                        supabase.table("transactions").delete().eq("ID", target_id).execute()
-                        
-                        # PROBLEM 3 FIXED: Mismatch filtering cast optimizations stripped safely[cite: 3]
-                        strlt.session_state.last_deleted_trans = df_trans[df_trans["ID"] == target_id]
-                        df_trans = df_trans[df_trans["ID"] != target_id]
-                        
+                if r_del.button("❌", key=f"del_j_{row['ID']}", use_container_width=True, type="secondary"):
+                    strlt.session_state.delete_confirm_target = {"scope": "transaction", "key": row["ID"]}
+                    strlt.rerun()
+                    
+                with r_nt:
+                    updated_note = strlt.text_input(
+                        "",
+                        value=note_val,
+                        key=f"nt_{row['ID']}",
+                        label_visibility="collapsed",
+                        placeholder="Note",
+                    )
+                    
+                if updated_note != note_val:
+                    supabase.table("transactions").update({"Note": str(updated_note).strip()}).eq("ID", int(row["ID"])).execute()
+                    idx_list = df_trans[df_trans["ID"] == int(row["ID"])].index
+                    if not idx_list.empty: df_trans.at[idx_list[0], "Note"] = str(updated_note).strip()
+                    strlt.rerun()
+                    
+                if is_this_target:
+                    strlt.markdown("<div class='alert-inline-banner'>⚠️ Mitaana chahte hain?</div>", unsafe_allow_html=True)
+                    b1, b2 = strlt.columns(2)
+                    if b1.button("✅ HAAN", key=f"yes_j_{row['ID']}", type="primary", use_container_width=True):
+                        supabase.table("transactions").delete().eq("ID", int(row["ID"])).execute()
+                        df_trans = df_trans[df_trans["ID"] != int(row["ID"])]
                         recalculate_all(vyapari_name=v_name)
                         strlt.session_state.delete_confirm_target = None
                         strlt.rerun()
-                    except Exception as ex:
-                        strlt.error(f"❌ Transaction delete operation fail: {str(ex)}")
-                if btn_grid2.button("❌ ROKO", key=f"no_j_{row['ID']}"):
-                    strlt.session_state.delete_confirm_target = None
-                    strlt.rerun()
+                    if b2.button("❌ ROKO", key=f"no_j_{row['ID']}", use_container_width=True):
+                        strlt.session_state.delete_confirm_target = None
+                        strlt.rerun()
+    # ===== UI PART 2 END =====
 
 # ==========================================
 # SCREEN 1: MAIN DASHBOARD HOME SCREEN
 # ==========================================
 else:
-    strlt.markdown("<div class='main-title'>✨ Smart Digital Vyapari Ledger Pro+</div>", unsafe_allow_html=True)
+    strlt.markdown("<div class='hero-box'><h1>💎 Smart Vyapari Ledger Pro+</h1><p>Digital Business Ledger Management Matrix System</p></div>", unsafe_allow_html=True)
     
     t_business = df_dash["Total Maal"].sum() if not df_dash.empty else 0
     t_received = df_dash["Total Jama"].sum() if not df_dash.empty else 0
     t_outstanding = df_dash["Baki Balance"].sum() if not df_dash.empty else 0
     
-    card1, card2, card3 = strlt.columns(3)
-    card1.markdown(f"<div class='kpi-box kpi-business'><span style='font-size:14px;'>📦 TOTAL BUSINESS (KUL MAAL)</span><br><span style='font-size:24px;'>₹ {safe_int(t_business):,}</span></div>", unsafe_allow_html=True)
-    card2.markdown(f"<div class='kpi-box kpi-received'><span style='font-size:14px;'>💰 TOTAL RECEIVED (KUL JAMA)</span><br><span style='font-size:24px;'>₹ {safe_int(t_received):,}</span></div>", unsafe_allow_html=True)
-    card3.markdown(f"<div class='kpi-box kpi-outstanding'><span style='font-size:14px;'>🔴 OUTSTANDING (KUL BAKI)</span><br><span style='font-size:24px;'>₹ {safe_int(t_outstanding):,}</span></div>", unsafe_allow_html=True)
+    card1, card2, card3, card4 = strlt.columns(4)
+    card1.markdown(f"<div class='metric-card'><div class='metric-title'>📦 TOTAL MAAL</div><div class='metric-value' style='color:#3B82F6;'>₹ {safe_int(t_business):,}</div></div>", unsafe_allow_html=True)
+    card2.markdown(f"<div class='metric-card'><div class='metric-title'>💰 TOTAL JAMA</div><div class='metric-value' style='color:#10B981;'>₹ {safe_int(t_received):,}</div></div>", unsafe_allow_html=True)
+    card3.markdown(f"<div class='metric-card'><div class='metric-title'>🔴 TOTAL BAKI</div><div class='metric-value' style='color:#EF4444;'>₹ {safe_int(t_outstanding):,}</div></div>", unsafe_allow_html=True)
+    card4.markdown(f"<div class='metric-card'><div class='metric-title'>👥 TOTAL VYAPARI</div><div class='metric-value' style='color:#06B6D4;'>{len(df_dash)}</div></div>", unsafe_allow_html=True)
+    
+    # --- Analytics Panel Component Section ---
+    strlt.markdown("<br>", unsafe_allow_html=True)
+    if "show_analytics" not in strlt.session_state:
+        strlt.session_state.show_analytics = False
+        
+    if strlt.button("📊 Toggle 12-Month Financial Business Analytics Panel", type="primary", use_container_width=True):
+        strlt.session_state.show_analytics = not strlt.session_state.show_analytics
+        strlt.rerun()
+        
+    if strlt.session_state.show_analytics:
+        strlt.markdown("<h3 style='margin-top:10px; font-weight:600;'>📊 12-Month Financial Business Analytics</h3>", unsafe_allow_html=True)
+        if not df_trans.empty:
+            one_year_ago = datetime.datetime.now() - datetime.timedelta(days=365)
+            df_analytics_slice = df_trans[df_trans["Tarikh"] >= one_year_ago].copy()
+            
+            if not df_analytics_slice.empty:
+                df_analytics_slice["Month_Key"] = df_analytics_slice["Tarikh"].dt.strftime("%b %Y")
+                df_pivot = df_analytics_slice.groupby(["Month_Key", "Type"])["Amount"].sum().unstack().fillna(0)
+                
+                if "Maal" not in df_pivot.columns: df_pivot["Maal"] = 0
+                if "Jama" not in df_pivot.columns: df_pivot["Jama"] = 0
+                df_pivot["Baki"] = df_pivot["Maal"] - df_pivot["Jama"]
+                
+                ch1, ch2, ch3 = strlt.columns(3)
+                with ch1:
+                    strlt.markdown("<div class='metric-card'><div class='metric-title'>📈 Monthly Maal Matrix</div>", unsafe_allow_html=True)
+                    strlt.bar_chart(df_pivot["Maal"], color="#3B82F6")
+                    strlt.markdown("</div>", unsafe_allow_html=True)
+                with ch2:
+                    strlt.markdown("<div class='metric-card'><div class='metric-title'>📈 Monthly Jama Tracking</div>", unsafe_allow_html=True)
+                    strlt.bar_chart(df_pivot["Jama"], color="#10B981")
+                    strlt.markdown("</div>", unsafe_allow_html=True)
+                with ch3:
+                    strlt.markdown("<div class='metric-card'><div class='metric-title'>📈 Monthly Net Baki Breakdown</div>", unsafe_allow_html=True)
+                    strlt.area_chart(df_pivot["Baki"], color="#EF4444")
+                    strlt.markdown("</div>", unsafe_allow_html=True)
+            else:
+                strlt.markdown("<div class='metric-card'><p class='no-data-text'>📊 No Data Available For Last 12 Months</p></div>", unsafe_allow_html=True)
+        else:
+            strlt.markdown("<div class='metric-card'><p class='no-data-text'>📊 No Data Available For Last 12 Months</p></div>", unsafe_allow_html=True)
+
+    strlt.markdown("<br>", unsafe_allow_html=True)
+    search_term = strlt.text_input("🔍 Search Vyapari Log Matrix", placeholder="Type Vyapari ka Naam ya Mobile Number to instantly filter metrics locally...", label_visibility="collapsed")
     
     strlt.markdown("<br>", unsafe_allow_html=True)
-    
     box_title = "👤 ➕ Naya Vyapari Jodein"
-    init_name = ""
-    init_mob = ""
+    init_name, init_mob = "", ""
     
     with strlt.expander(box_title, expanded=False):
         voice_v_text = ""
-        if strlt.button("🎙️ Speak Vyapari Info (Bolein: 'Ramesh 91xxxxxxxxxx')"):
+        if strlt.button("🎙️ Speak Vyapari Info"):
             with strlt.spinner("Aap boliye..."):
                 voice_v_text = listen_voice_command()
                 if voice_v_text: strlt.info(f"Suna: '{voice_v_text}'")
@@ -653,59 +738,31 @@ else:
         
         if submit_merchant:
             if n_name and n_mob:
-                if not df_dash.empty and n_name in df_dash["Naam"].values:
-                    strlt.warning("Vyapari pehle se add hai.")
+                if not df_dash.empty and n_name in df_dash["Naam"].values: strlt.warning("Vyapari pehle se add hai.")
                 else:
                     try:
                         new_profile = {"Naam": n_name, "Mobile": str(n_mob), "Total Maal": 0, "Total Jama": 0, "Baki Balance": 0}
                         supabase.table("dashboard").upsert(new_profile, on_conflict="Naam").execute()
-                        
-                        new_v = pd.DataFrame([new_profile])
-                        df_dash = pd.concat([df_dash, new_v], ignore_index=True)
-                        strlt.success(f"✔️ Vyapari profile {n_name} cloud dataset me active save ho gayi!")
+                        df_dash = pd.concat([df_dash, pd.DataFrame([new_profile])], ignore_index=True)
                         strlt.rerun()
-                    except Exception as ex:
-                        strlt.error(f"❌ Profile creation database fault: {str(ex)}")
+                    except Exception as ex: strlt.error(f"❌ Error: {str(ex)}")
 
     strlt.markdown("---")
     strlt.subheader("👥 Active Vyapari Ledger Logs")
 
-    if has_deleted_vyapari:
-        strlt.markdown("<div class='undo-banner'>⚠️ Vyapari Profile Mita Diya Gaya Hai!</div>", unsafe_allow_html=True)
-        h_ub_c1, h_ub_c2 = strlt.columns([5, 5])
-        if h_ub_c1.button("↩️ UNDO (Wapas Layein)", type="primary", use_container_width=True):
-            try:
-                restore_profile = strlt.session_state.last_deleted_vyapari.copy()
-                supabase.table("dashboard").upsert(restore_profile, on_conflict="Naam").execute()
-                df_dash = pd.concat([df_dash, pd.DataFrame([restore_profile])], ignore_index=True)
-                
-                if has_deleted_trans:
-                    undo_trans_records = strlt.session_state.last_deleted_trans.copy().to_dict(orient="records")
-                    for r in undo_trans_records:
-                        if "ID" in r:
-                            del r["ID"]
-                        r["Tarikh"] = pd.to_datetime(r["Tarikh"]).strftime("%Y-%m-%d")
-                    if undo_trans_records:
-                        insert_res = supabase.table("transactions").insert(undo_trans_records).execute()
-                        if insert_res.data:
-                            for t_row in insert_res.data:
-                                t_row["Tarikh"] = pd.to_datetime(t_row["Tarikh"])
-                                df_trans = pd.concat([df_trans, pd.DataFrame([t_row])], ignore_index=True)
-                                
-                strlt.session_state.last_deleted_vyapari = None
-                strlt.session_state.last_deleted_trans = None
-                recalculate_all()
-                strlt.success("Profile safaltapurvak cloud par wapas restore ho gaya!")
-                strlt.rerun()
-            except Exception as ex:
-                strlt.error(f"❌ Merchant profile undo crash exception: {str(ex)}")
-        if h_ub_c2.button("❌ Close (Hatayein)", use_container_width=True):
-            strlt.session_state.last_deleted_vyapari = None
-            strlt.session_state.last_deleted_trans = None
-            strlt.rerun()
-    
-    if not df_dash.empty:
-        for idx, row in df_dash.iterrows():
+    filtered_df_dash = df_dash.copy()
+    if search_term:
+        term = str(search_term).strip().lower()
+        filtered_df_dash = filtered_df_dash[
+            (filtered_df_dash["Naam"].astype(str).str.lower().str.contains(term, na=False)) |
+            (filtered_df_dash["Mobile"].astype(str).str.lower().str.contains(term, na=False)) |
+            (filtered_df_dash["Baki Balance"].astype(str).str.lower().str.contains(term, na=False)) |
+            (filtered_df_dash["Total Maal"].astype(str).str.lower().str.contains(term, na=False)) |
+            (filtered_df_dash["Total Jama"].astype(str).str.lower().str.contains(term, na=False))
+        ]
+        
+    if not filtered_df_dash.empty:
+        for idx, row in filtered_df_dash.iterrows():
             v_name = row["Naam"]
             serial_no = idx + 1
             
@@ -718,58 +775,45 @@ else:
                 last_maal_date = df_v_maal["Tarikh"].max()
                 if not df_v_jama.empty:
                     last_jama_date = df_v_jama["Tarikh"].max()
-                    if (datetime.datetime.now() - last_jama_date).days > 90 and last_maal_date > last_jama_date:
-                        alert_active = True
+                    if (datetime.datetime.now() - last_jama_date).days > 90 and last_maal_date > last_jama_date: alert_active = True
                 else:
-                    if (datetime.datetime.now() - last_maal_date).days > 90:
-                        alert_active = True
+                    if (datetime.datetime.now() - last_maal_date).days > 90: alert_active = True
                         
-            g1, g2, g3, g4 = strlt.columns([5, 2, 1, 1])
-            alert_html = "<span class='alert-tag'>🔴 3-MONTH OVERDUE ALERT</span>" if alert_active else ""
+            strlt.markdown(f"<div class='premium-vyapari-card'>", unsafe_allow_html=True)
+            alert_html = "<span class='alert-tag'>🔴 OVERDUE</span>" if alert_active else ""
+            c_info, c_stats, c_actions = strlt.columns([4.5, 3.5, 2])
             
-            g1.markdown(f"👤 **{serial_no}. {v_name}** &nbsp;&nbsp; {alert_html}<br><span style='color:gray; font-size:13px;'>📱 Mobile: {row['Mobile']}</span>", unsafe_allow_html=True)
-            g2.markdown(f"<div style='text-align: right;'><b>Baki: ₹{safe_int(row['Baki Balance']):,}</b><br><span style='font-size:12px; color:gray;'>M: ₹{safe_int(row['Total Maal']):,} / J: ₹{safe_int(row['Total Jama']):,}</span></div>", unsafe_allow_html=True)
-            
-            if g3.button("📖 Open", key=f"open_{v_name}"):
-                strlt.session_state.selected_vyapari = v_name
-                strlt.rerun()
-                
-            col_icon1, col_icon2 = g4.columns(2)
-            if col_icon1.button("✏️", key=f"edit_v_{v_name}"):
-                strlt.session_state.editing_vyapari_name = v_name
-                strlt.rerun()
-                
-            if col_icon2.button("❌", key=f"del_v_{v_name}"):
-                strlt.session_state.delete_confirm_target = {"scope": "vyapari", "key": v_name, "display_info": f"Vyapari Profile ({v_name})"}
-                strlt.rerun()
-                
-            if (strlt.session_state.delete_confirm_target is not None and 
-                strlt.session_state.delete_confirm_target["scope"] == "vyapari" and 
-                strlt.session_state.delete_confirm_target["key"] == v_name):
-                strlt.markdown(f"<div class='alert-inline-banner'>⚠️ Vyapari Profile {v_name} ko mitaana chahte hain?</div>", unsafe_allow_html=True)
+            with c_info:
+                strlt.markdown(f"<div class='v-title-large'>👤 {serial_no}. {v_name} {alert_html}</div><div class='v-sub-mobile'>📞 Mobile: {row['Mobile']}</div>", unsafe_allow_html=True)
+            with c_stats:
+                strlt.markdown(f"<div class='v-grid-stats'>📦 Maal: ₹{safe_int(row['Total Maal']):,} &nbsp;|&nbsp; 💵 Jama: ₹{safe_int(row['Total Jama']):,}</div><div class='v-baki-highlight'>🔴 Baki Outstanding: ₹{safe_int(row['Baki Balance']):,}</div>", unsafe_allow_html=True)
+            with c_actions:
+                btn_col1, btn_col2, btn_col3 = strlt.columns(3)
+                if btn_col1.button("📖 Open", key=f"open_{v_name}", use_container_width=True, type="primary"):
+                    strlt.session_state.selected_vyapari = v_name
+                    strlt.rerun()
+                if btn_col2.button("✏️", key=f"edit_v_{v_name}", use_container_width=True, type="secondary"):
+                    strlt.session_state.editing_vyapari_name = v_name
+                    strlt.rerun()
+                if btn_col3.button("❌", key=f"del_v_{v_name}", use_container_width=True, type="secondary"):
+                    strlt.session_state.delete_confirm_target = {"scope": "vyapari", "key": v_name}
+                    strlt.rerun()
+                    
+            if (strlt.session_state.delete_confirm_target is not None and strlt.session_state.delete_confirm_target["scope"] == "vyapari" and strlt.session_state.delete_confirm_target["key"] == v_name):
+                strlt.markdown(f"<div class='alert-inline-banner'>⚠️ Deletion Alert Profile Account '{v_name}' Purge Sequence Warning?</div>", unsafe_allow_html=True)
                 v_btn1, v_btn2 = strlt.columns(2)
-                if v_btn1.button("✅ CONFIG HAAN", key=f"y_v_{v_name}", type="primary"):
-                    try:
-                        supabase.table("dashboard").delete().eq("Naam", v_name).execute()
-                        supabase.table("transactions").delete().eq("Naam", v_name).execute()
-                        
-                        strlt.session_state.last_deleted_vyapari = df_dash[df_dash["Naam"] == v_name].iloc[0].to_dict()
-                        strlt.session_state.last_deleted_trans = df_trans[df_trans["Naam"] == v_name]
-                        
-                        df_dash = df_dash[df_dash["Naam"] != v_name]
-                        df_trans = df_trans[df_trans["Naam"] != v_name]
-                        
-                        strlt.session_state.delete_confirm_target = None
-                        strlt.success("Profile records base architecture se delete ho gaye!")
-                        strlt.rerun()
-                    except Exception as ex:
-                        strlt.error(f"❌ Merchant total account purge sequence failed: {str(ex)}")
-                if v_btn2.button("❌ ROKO", key=f"n_v_{v_name}"):
+                if v_btn1.button("🔥 YES, PURGE RECS", key=f"y_v_{v_name}", type="primary", use_container_width=True):
+                    supabase.table("dashboard").delete().eq("Naam", v_name).execute()
+                    supabase.table("transactions").delete().eq("Naam", v_name).execute()
+                    df_dash = df_dash[df_dash["Naam"] != v_name]
+                    df_trans = df_trans[df_trans["Naam"] != v_name]
                     strlt.session_state.delete_confirm_target = None
                     strlt.rerun()
-                
-            strlt.markdown("<div style='border-bottom:1px solid #e1e5eb; margin-bottom:12px; margin-top:4px;'></div>", unsafe_allow_html=True)
+                if v_btn2.button("❌ CANCEL ROKO", key=f"n_v_{v_name}", use_container_width=True):
+                    strlt.session_state.delete_confirm_target = None
+                    strlt.rerun()
+            strlt.markdown("</div>", unsafe_allow_html=True)
     else:
-        strlt.info("Abhi tak koi Vyapari Profile add nahi ki gayi hai.")
+        strlt.info("Koi Vyapari data mila nahi.")
 
-strlt.markdown("<div style='border-bottom:1px solid #e1e5eb; margin-bottom:12px; margin-top:4px;'></div>", unsafe_allow_html=True)
+strlt.markdown("<div style='border-bottom:1px solid rgba(255,255,255,0.08); margin-bottom:12px; margin-top:4px;'></div>", unsafe_allow_html=True)
