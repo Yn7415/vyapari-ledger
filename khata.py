@@ -760,8 +760,24 @@ else:
             (filtered_df_dash["Total Maal"].astype(str).str.lower().str.contains(term, na=False)) |
             (filtered_df_dash["Total Jama"].astype(str).str.lower().str.contains(term, na=False))
         ]
-        
+        # YAHAN PASTE KAREIN
+    if strlt.session_state.get("editing_vyapari_name"):
+        with strlt.expander("🟡 Vyapari Details Edit Karein", expanded=True):
+            edit_v_name = strlt.session_state.editing_vyapari_name
+            match = df_dash[df_dash["Naam"] == edit_v_name]
+            if not match.empty:
+                current_data = match.iloc[0]
+                with strlt.form("edit_v_form"):
+                    n_name = strlt.text_input("Naya Naam", value=current_data["Naam"])
+                    n_mob = strlt.text_input("Naya Mobile", value=current_data["Mobile"])
+                    if strlt.form_submit_button("✅ Update Karein"):
+                        supabase.table("dashboard").update({"Naam": n_name, "Mobile": str(n_mob)}).eq("Naam", edit_v_name).execute()
+                        strlt.session_state.editing_vyapari_name = None
+                        strlt.rerun()
+
+    # AB ISKE NEECHE TUMHARA WOH "if not filtered_df_dash.empty:" WALA LOOP CHALEGA
     if not filtered_df_dash.empty:
+     
         for idx, row in filtered_df_dash.iterrows():
             v_name = row["Naam"]
             serial_no = idx + 1
